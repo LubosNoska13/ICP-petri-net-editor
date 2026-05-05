@@ -30,7 +30,7 @@ struct Output {
 
 struct Place {
     std::string name;
-    int initialTokens = 0;
+    int initial_tokens = 0;
     std::string add_token_action;
 };
 
