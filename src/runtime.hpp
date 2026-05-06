@@ -85,8 +85,7 @@ private:
     bool transition_enabled(const Transition& transition, 
             const std::optional<std::string>& triggering_event) const;
     bool enough_tokens(const Transition& transition) const;
-    std::vector<const Transition*> collect_immediate_enabled(
-            const std::optional<std::string>& triggering_event);
+    std::vector<const Transition*> immediate_enabled(const std::optional<std::string>& triggering_event);
     std::vector<const Transition*> max_independent_set(
             const std::vector<const Transition*>& candidates) const;
     void fire_transition(const Transition& transition);
