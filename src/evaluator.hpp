@@ -1,7 +1,6 @@
 // autor: Jurišinová Daniela (xjurisd00)
-
-#ifndef RUNTIME_HPP
-#define RUNTIME_HPP
+#ifndef EVALUATOR_HPP
+#define EVALUATOR_HPP
 
 #include "model.hpp"
 #include <cstdint>
@@ -46,6 +45,9 @@ private:
     void execute_statement(const std::string& statement, EvaluationInterface& interface) const;
     static std::string trim(const std:: string& string);
     static std::vector<std::string> split_statements(const std::string& code);
+    std::string remove_brackets(const std::string& expression) const;
+    std::vector<std::string> split_by_operator(const std::string& expression,
+            const std::string& operat) const;
 };
 
 #endif
