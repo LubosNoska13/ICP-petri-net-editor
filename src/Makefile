@@ -1,31 +1,28 @@
 CXX = g++
 CXXFLAGS = -std=c++17 -Wall -Wextra -pedantic -g
+LDFLAGS =
 
+TARGET = petri_core
 BUILD_DIR = build
 SRCS = $(wildcard *.cpp)
+OBJS = $(patsubst %.cpp,$(BUILD_DIR)/%.o,$(SRCS))
+RUN_NET ?= ../examples/tof_pn_5s.pn
 
-.PHONY: all clean
+.PHONY: all run clean
 
-all:
+all: $(TARGET)
+
+$(TARGET): $(OBJS)
+	$(CXX) $(CXXFLAGS) $(OBJS) -o $@ $(LDFLAGS)
+	@echo "Vytvorený konzolový program: $@"
+
+$(BUILD_DIR)/%.o: %.cpp
 	@mkdir -p $(BUILD_DIR)
-	@failed=0; \
-	for src in $(SRCS); do \
-		obj="$(BUILD_DIR)/$${src%.cpp}.o"; \
-		printf "Preklad $$src ... "; \
-		if $(CXX) $(CXXFLAGS) -c "$$src" -o "$$obj"; then \
-			echo "OK"; \
-		else \
-			echo "NEPODARILO SA"; \
-			failed=1; \
-		fi; \
-	done; \
-	if [ $$failed -eq 0 ]; then \
-		echo "Všetky súbory sa úspešne preložili."; \
-	else \
-		echo "Niektoré súbory sa nepreložili."; \
-		exit 1; \
-	fi
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+run: $(TARGET)
+	./$(TARGET) $(RUN_NET)
 
 clean:
-	@rm -rf $(BUILD_DIR)
+	@rm -rf $(BUILD_DIR) $(TARGET)
 	@echo "Vyčistené."

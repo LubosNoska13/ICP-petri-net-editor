@@ -14,6 +14,9 @@
  * @brief Module contains static parts of network and helpers
  */
 
+// stable identifier used by GUI
+using ModelId = std::uint64_t;
+
 struct Variable {
     std::string type;
     std::string name;
@@ -29,6 +32,7 @@ struct Output {
 };
 
 struct Place {
+    ModelId id = 0;
     std::string name;
     int initial_tokens = 0;
     std::string add_token_action;
@@ -51,6 +55,7 @@ struct TransitionCondition {
 };
 
 struct Transition {
+    ModelId id = 0;
     std::string name;
     std::vector<Arc> input_arcs;
     std::vector<Arc> output_arcs;
@@ -83,6 +88,31 @@ public:
     bool has_input(const std::string& name) const;
     bool has_output(const std::string& name) const;
     bool has_variable(const std::string& name) const;
+    // editor helpers
+    static bool valid_id(const std::string& name);
+    Place& add_place(const std::string& name, int initial_tokens = 0, 
+            const std::string& add_token_action = "");
+    bool remove_place(const std::string& name);
+    bool rename_place(const std::string& old_name, const std::string& new_name);
+    Transition& add_transition(const std::string& name, 
+            const TransitionCondition& condition = TransitionCondition{},
+            const std::string& action_code = "", std::optional<int> priority = std::nullopt);
+    bool remove_transition(const std::string& name);
+    bool add_input_arc(const std::string& transition_name, const std::string& place_name,
+            int weight = 1);
+    bool add_output_arc(const std::string& transition_name, const std::string& place_name,
+            int weight = 1);
+    // serialization/ownership helpers
+    std::string to_text() const;
+    void clear();
+private:
+    ModelId m_next_place_id = 1;
+    ModelId m_next_transition_id = 1;
+
+    ModelId allocate_place_id();
+    ModelId allocate_transition_id();
+    static void validate_id(const std::string& name, const std::string& what);
+    static void validate_weight(int weight);
 };
 
 #endif
