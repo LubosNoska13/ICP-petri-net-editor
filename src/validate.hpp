@@ -34,12 +34,15 @@ struct ValidationResult {
 class Validator {
 public:
     ValidationResult validate(const PetriNet& net) const;
+    ValidationResult validate_live(const PetriNet& net) const;
 
 private:
     void validate_names(const PetriNet& net, ValidationResult& result) const;
     void validate_places(const PetriNet& net, ValidationResult& result) const;
     void validate_transitions(const PetriNet& net, ValidationResult& result) const;
     void validate_events(const PetriNet& net, ValidationResult& result) const;
+    void validate_inscriptions(const PetriNet& net, ValidationResult& result) const;
+    void validate_reachability(const PetriNet& net, ValidationResult& result) const;
 };
 
 #endif
