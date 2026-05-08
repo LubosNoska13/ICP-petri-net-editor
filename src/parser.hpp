@@ -5,16 +5,33 @@
 
 #include "model.hpp"
 #include <string>
+#include <vector>
 
 /**
  * @file parser.hpp
  * @brief Parser and writer for readable text format of Petri Net
  */
 
+struct ParseError {
+    int line = 0;
+    std::string message;
+};
+
+struct ParseResult {
+    PetriNet net;
+    std::vector<ParseError> errors;
+
+    bool ok() const { return errors.empty(); }
+    operator PetriNet() const { return net; }
+};
+
+/**
+ * Parser of the Petrinet in text format 
+ */
 class Parser {
 public:
-    PetriNet parse_file(const std::string& path) const;
-    PetriNet parse_string(const std::string& content) const;
+    ParseResult parse_file(const std::string& path) const;
+    ParseResult parse_string(const std::string& content) const;
 };
 
 class Writer {
