@@ -941,7 +941,7 @@ void Evaluator::execute_statement(const std::string& statement, EvaluationInterf
 * @param string - the string for trimming
 * @return trimmed string
 */
-std::string trim(const std::string& string) {
+std::string Evaluator::trim(const std::string& string) {
     const auto begin = string.find_first_not_of(" \t\r\n");
     if (begin == std::string::npos) {
         return "";

@@ -5,6 +5,15 @@
 #include <stdexcept> 
 #include <algorithm>
 #include <sstream>
+#include <cctype>
+
+namespace {
+
+std::string eval_to_string(const EvalValue& value) {
+    return value.as_string();
+}
+
+}
 
 /**
  * Constructor of class PetriRuntime
@@ -19,8 +28,16 @@ PetriRuntime::PetriRuntime(PetriNet net)
  * inpnuts sets runtime values and then for each variable converts value
  * to integer if it's possible. Finally starts stabilization.
  */
-void PetriRuntime::initialize() {
+void PetriRuntime::initialize(bool run_initial_place_actions) {
     m_logger.log(m_now_ms, LoggerEventType::RuntimeStarted, "Runtime started for Petrinet: " + m_net.name);
+    m_marking.clear();
+    m_inputs.clear();
+    m_outputs.clear();
+    m_variables.clear();
+    m_place_changed_at.clear();
+    m_transition_enabled_since.clear();
+    m_timers = std::priority_queue<PendingTimer>{};
+    m_timer_sequence = 0;
 
     // sets initial tokens for all places and writes up change time
     for (const auto& place : m_net.places) {
@@ -33,15 +50,33 @@ void PetriRuntime::initialize() {
         m_inputs[input.name] = RuntimeInputValue{};
     }
 
-    // for each variable converts value if its not empty and saves it
+    // for each output sets runtime value
+    for (const auto& output : m_net.outputs) {
+        m_outputs[output.name] = RuntimeOutputValue{};
+    }
+
+    // for each variable sets initial value 
     for (const auto& variable : m_net.variables) {
         RuntimeVariable runtime_variable;
-        if (!variable.initializer.empty()) {
-            runtime_variable.value = std::atoi(variable.initializer.c_str());
+        // no specified type converts to int
+        if (variable.type.empty()) {
+            runtime_variable.type = "int";
+        } 
+        else {
+            runtime_variable.type = variable.type;
         }
+        runtime_variable.value = initial_value_for_variable(variable);
         m_variables[variable.name] = runtime_variable;
     }
+
+    // if stated, executes possible actions for all places
+    if (run_initial_place_actions) {
+        for (const auto& place : m_net.places) {
+            execute_place_action_for_added_tokens(place.name, place.initial_tokens);
+        }
+    }
     run_stabilization(std::nullopt);
+    notify_state_changed();
 }
 
 /**
@@ -55,6 +90,7 @@ void PetriRuntime::initialize() {
 void PetriRuntime::inject_input(const std::string& name, const std::string& value) {
     // input exists check
     if (m_inputs.find(name) == m_inputs.end()) {
+        notify_error("Unknown input: " + name);
         throw std::runtime_error("Unknown input: " + name);
     }
 
@@ -64,6 +100,7 @@ void PetriRuntime::inject_input(const std::string& name, const std::string& valu
     m_inputs[name].last_update_ms = m_now_ms;
     m_logger.log(m_now_ms, LoggerEventType::InputReceived, "Input " + name + " = " + value);
     run_stabilization(name);
+    notify_state_changed();
 }
 
 /**
@@ -76,13 +113,34 @@ void PetriRuntime::inject_input(const std::string& name, const std::string& valu
 void PetriRuntime::advance_time(int64_t delta_ms) {
     // negative shift check
     if (delta_ms < 0) {
+        notify_error("Can't move runtime time backwards");
         throw std::runtime_error("Can't move runtime time backwards");
     }
 
     // shifts time 
     m_now_ms += delta_ms;
+    step();
+}
+
+
+/**
+ * Method performs one runtime step by processing due timers,
+ * running stabilization and notifying about state changes
+ * if any change happened during the step
+ *
+ * @return true if runtime state changed otherwise false
+ */
+bool PetriRuntime::step() {
+    const std::size_t old_log_size = m_logger.entries().size();
     process_due_timers();
     run_stabilization(std::nullopt);
+
+    // change check
+    const bool changed = m_logger.entries().size() != old_log_size;
+    if (changed) {
+        notify_state_changed();
+    }
+    return changed;
 }
 
 /**
@@ -94,8 +152,9 @@ void PetriRuntime::advance_time(int64_t delta_ms) {
  * @param triggering_event - optional event that triggers stabilization
  */
 void PetriRuntime::run_stabilization(const std::optional<std::string>& triggering_event) {
+    std::optional<std::string> current_event = triggering_event;
     while (true) {
-        auto candidates = immediate_enabled(triggering_event);
+        auto candidates = immediate_enabled(current_event);
         auto selected = max_independent_set(candidates);
 
         // no transition can be made and net is stabilized
@@ -107,6 +166,7 @@ void PetriRuntime::run_stabilization(const std::optional<std::string>& triggerin
         for (const auto* transition : selected) {
             fire_transition(*transition);
         }
+        current_event = std::nullopt;
     }
     // plans other transitions
     schedule_delayed_transitions(triggering_event);
@@ -114,16 +174,20 @@ void PetriRuntime::run_stabilization(const std::optional<std::string>& triggerin
 
 /**
  * Method creates a snapshot of the current state of Petrinet.
- * Copies marking, inputs, variables and pending timers if there 
- * are any
+ * Copies marking, time, inputs, outputs, variables, enabled transitions 
+ * entries and pending timers if there are any
  *
  * @return snapshot with current state of runtime
  */
 StateSnapshot PetriRuntime::snapshot() const {
     StateSnapshot snap;
+    snap.now_ms = m_now_ms;
     snap.marking = m_marking;
     snap.inputs = m_inputs;
+    snap.outputs = m_outputs;
     snap.variables = m_variables;
+    snap.enabled_transitions = current_enabled_transitions();
+    snap.event_log = &m_logger.entries();
 
     auto timers_copy = m_timers;
     while (!timers_copy.empty()) {
@@ -131,6 +195,37 @@ StateSnapshot PetriRuntime::snapshot() const {
         timers_copy.pop();
     }
     return snap;
+}
+
+/**
+ * Method checks enabled transitions. If triggering event is provided, 
+ * transitions are checked against that event otherwise transitions are 
+ * checked for monitor activation.
+ *
+ * @param triggering_event - optional event that may trigger transitions
+ * @return vector of names of enabled transitions
+ */
+std::vector<std::string> PetriRuntime::current_enabled_transitions(const std::optional<std::string>& 
+            triggering_event) const {
+    
+    std::vector<std::string> result;
+    for (const auto& transition : m_net.transitions) {
+        bool enabled;
+        
+        // triggering event check
+        if (triggering_event.has_value()) {
+            enabled = transition_enabled(transition, triggering_event);
+        } 
+        else {
+            enabled = transition_enabled_for_monitor(transition);
+        }
+
+        // adds transition to list of enabled transitions
+        if (enabled) {
+            result.push_back(transition.name);
+        }
+    }
+    return result;
 }
 
 /**
@@ -150,6 +245,51 @@ const Logger& PetriRuntime::logger() const {
  */
 Logger& PetriRuntime::logger() {
     return m_logger;
+}
+
+/**
+ * Method sets callback that is called when runtime state changes.
+ *
+ * @param callback - callback function to be stored
+ */
+void PetriRuntime::set_on_state_changed(StateChangedCallback callback) {
+    m_on_state_changed = std::move(callback);
+}
+
+/**
+ * Method sets callback that is called when transition was fired
+ *
+ * @param callback - callback function to be stored
+ */
+void PetriRuntime::set_on_transition_fired(TransitionFiredCallback callback) {
+    m_on_transition_fired = std::move(callback);
+}
+
+/**
+ * Method sets callback that is called when net prodiced output
+ *
+ * @param callback - callback function to be stored
+ */
+void PetriRuntime::set_on_output_produced(OutputProducedCallback callback) {
+    m_on_output_produced = std::move(callback);
+}
+
+/**
+ * Method sets callback that is called when some timer is set
+ *
+ * @param callback - callback function to be stored
+ */
+void PetriRuntime::set_on_timer_scheduled(TimerScheduledCallback callback) {
+    m_on_timer_scheduled = std::move(callback);
+}
+
+/**
+ * Method sets callback that is called when some error occures
+ *
+ * @param callback - callback function to be stored
+ */
+void PetriRuntime::set_on_error(RuntimeErrorCallback callback) {
+    m_on_error = std::move(callback);
 }
 
 /**
@@ -241,12 +381,27 @@ bool PetriRuntime::has_variable(const std::string& name) const {
  * @param name - name of the variable which value is checked
  * @return value of the variable or error if variable doesn't exists
  */
-int PetriRuntime::variable_value(const std::string& name) const {
+EvalValue PetriRuntime::variable_value(const std::string& name) const {
     auto variable = m_variables.find(name);
     if (variable == m_variables.end()) {
         throw std::runtime_error("Unknown variable: " + name);
     }
     return variable->second.value;
+}
+
+/**
+ * Method returns type of variable with given name. If variable doesn't 
+ * exist error occures
+ *
+ * @param name - name of variable
+ * @return type of variable
+ */
+std::string PetriRuntime::variable_type(const std::string& name) const {
+    auto variable = m_variables.find(name);
+    if (variable == m_variables.end()) {
+        throw std::runtime_error("Unknown variable: " + name);
+    }
+    return variable->second.type;
 }
 
 /**
@@ -257,19 +412,25 @@ int PetriRuntime::variable_value(const std::string& name) const {
  * @param name - name of the variable to be set
  * @param value - value which is gonna be value of the variable
  */
-void PetriRuntime::set_variable_value(const std::string& name, int value) {
+void PetriRuntime::set_variable_value(const std::string& name, const EvalValue& value) {
     // variable exists check
     auto variable = m_variables.find(name);
     if (variable == m_variables.end()) {
+        notify_error("Unknown variable: " + name);
         throw std::runtime_error("Unknown variable: " + name);
     }
 
-    int old_value = variable->second.value;
+    std::string old_value = eval_to_string(variable->second.value);
     variable->second.value = value;
-    // value really changed check
-    if (old_value != value) {
-        m_logger.log(m_now_ms, LoggerEventType::VariableChanged, "Variable " + name + " changed from " +
-                std::to_string(old_value) + " to " + std::to_string(value));
+    std::string new_value = eval_to_string(value);
+
+    // write change in log
+    if (old_value != new_value) {
+        LoggerDetails details;
+        details.old_value = old_value;
+        details.new_value = new_value;
+        m_logger.log(m_now_ms, LoggerEventType::VariableChanged, "Variable " + name + " changed from " 
+                + old_value + " to " + new_value, details);
     }
 }
 
@@ -280,7 +441,24 @@ void PetriRuntime::set_variable_value(const std::string& name, int value) {
  * @param value - value to be emitted in the output
  */
 void PetriRuntime::emit_output(const std::string& name, const std::string& value) {
-    m_logger.log(m_now_ms, LoggerEventType::OutputProduced, "Output " + name + " = " + value);
+    // empty output check
+    if (m_outputs.find(name) == m_outputs.end()) {
+        m_outputs[name] = RuntimeOutputValue{};
+    }
+
+    m_outputs[name].defined = true;
+    m_outputs[name].value = value;
+    m_outputs[name].last_update_ms = m_now_ms;
+
+    // write production in log
+    LoggerDetails details;
+    details.old_value = name;
+    details.new_value = value;
+    m_logger.log(m_now_ms, LoggerEventType::OutputProduced, "Output " + name + " = " + value, details);
+
+    if (m_on_output_produced) {
+        m_on_output_produced(name, value, snapshot());
+    }
 }
 
 /**
@@ -321,6 +499,29 @@ bool PetriRuntime::transition_enabled(const Transition& transition,
 }
 
 /**
+ * Method checks whether transition has enough tokens in its input places
+ * and its guard expression can be successfully evaluated as true
+ *
+ * @param transition - transition to be checked
+ * @return true if transition is enabled for monitor otherwise false
+ */
+bool PetriRuntime::transition_enabled_for_monitor(const Transition& transition) const {
+    // enough tokens of places for transition check
+    if (!enough_tokens(transition)) {
+        return false;
+    }
+
+    // tries if enabled
+    try {
+        PetriRuntime& self = const_cast<PetriRuntime&>(*this);
+        return m_evaluator.guard_evaluation(transition.condition.guard_expression, self);
+    }
+    catch (...) {
+        return false;
+    }
+}
+
+/**
  * Method checks if all input places of transition have enough tokens
  * for transition to be enabled. 
  *
@@ -344,7 +545,9 @@ bool PetriRuntime::enough_tokens(const Transition& transition) const {
  * @param triggering_event - optional event to trigger the transitions
  * @return vector of all current enabled immediate transitions
  */
-std::vector<const Transition*> PetriRuntime::immediate_enabled(const std::optional<std::string>& triggering_event) {
+std::vector<const Transition*> PetriRuntime::immediate_enabled(const std::optional<std::string>& 
+            triggering_event) const {
+
     std::vector<const Transition*> result;
     // continuous enabled and immediate check
     for (const auto& transition : m_net.transitions) {
@@ -376,8 +579,8 @@ std::vector<const Transition*> PetriRuntime::immediate_enabled(const std::option
  * @param candidates - all transitions to be checked
  * @return vector of selected transitions that can be fired together
  */
-std::vector<const Transition*> PetriRuntime::max_independent_set(
-        const std::vector<const Transition*>& candidates) const {
+std::vector<const Transition*> PetriRuntime::max_independent_set(const std::vector<const Transition*>& 
+            candidates) const {
 
     std::vector<const Transition*> selected;
     std::map<std::string, int> reserved_tokens;
@@ -412,19 +615,33 @@ std::vector<const Transition*> PetriRuntime::max_independent_set(
 /**
  * Method fires a given transition. First writes in log the firing event, then consumes
  * required input tokens from input places. If the transition contains action
- * code, the action is executed. Finally output tokens are produced to output
- * places.
+ * code, the action is executed. After that, output tokens are produced to
+ * output places and callback is called if stated
  *
  * @param transition - transition to be fired
  */
 void PetriRuntime::fire_transition(const Transition& transition) {
-    m_logger.log(m_now_ms, LoggerEventType::TransitionFired, "Transition " + transition.name + " fired");
-    consume_input_tokens(transition);
+    // writes fire in log
+    LoggerDetails details;
+    details.transition_name = transition.name;
+    m_logger.log(m_now_ms, LoggerEventType::TransitionFired, "Transition " + transition.name + " fired", 
+            details);
 
+    consume_input_tokens(transition);
+    // executes transition if stated
     if (!transition.action_code.empty()) {
-        m_evaluator.execute_action(transition.action_code, *this);
+        try {
+            m_evaluator.execute_action(transition.action_code, *this);
+        }
+        catch (const std::exception& error) {
+            notify_error("Action of transition " + transition.name + " failed: " + error.what());
+            throw;
+        }
     }
     produce_output_tokens(transition);
+    if (m_on_transition_fired) {
+        m_on_transition_fired(transition, snapshot());
+    }
 }
 
 /**
@@ -445,8 +662,15 @@ void PetriRuntime::consume_input_tokens(const Transition& transition) {
         if (old_value != new_value) {
             m_place_changed_at[arc.place_name] = m_now_ms;
         }
-        m_logger.log(m_now_ms, LoggerEventType::TokenChanged, arc.place_name + ": " +
-                std::to_string(old_value) + " -> " + std::to_string(new_value));
+        
+        // writes change in log
+        LoggerDetails details;
+        details.transition_name = transition.name;
+        details.place_name = arc.place_name;
+        details.old_value = std::to_string(old_value);
+        details.new_value = std::to_string(new_value);
+        m_logger.log(m_now_ms, LoggerEventType::TokenChanged, arc.place_name + ": " + 
+                std::to_string(old_value) + " -> " + std::to_string(new_value), details);
     }
 }
 
@@ -469,15 +693,42 @@ void PetriRuntime::produce_output_tokens(const Transition& transition) {
         if (old_value != new_value) {
             m_place_changed_at[arc.place_name] = m_now_ms;
         }
-        m_logger.log(m_now_ms, LoggerEventType::TokenChanged, arc.place_name + ": " +
-                std::to_string(old_value) + " -> " + std::to_string(new_value));
+        
+        // writes change in log
+        LoggerDetails details;
+        details.transition_name = transition.name;
+        details.place_name = arc.place_name;
+        details.old_value = std::to_string(old_value);
+        details.new_value = std::to_string(new_value);
+        m_logger.log(m_now_ms, LoggerEventType::TokenChanged, arc.place_name + ": " + 
+                std::to_string(old_value) + " -> " + std::to_string(new_value), details);
 
-        // finds output place and executed add-token action if stated
-        const Place* place = m_net.find_place(arc.place_name);
-        if (place != nullptr && !place->add_token_action.empty()) {
-            for (int index = 0; index < arc.weight; ++index) {
-                m_evaluator.execute_action(place->add_token_action, *this);
-            }
+        execute_place_action_for_added_tokens(arc.place_name, arc.weight);
+    }
+}
+
+/**
+ * Method executes action code of a place for each token added to that place.
+ * If the place does not exist or has no add-token action defined, nothing happens.
+ *
+ * @param place_name - name of the place whose action should be executed
+ * @param count - number of added tokens
+ */
+void PetriRuntime::execute_place_action_for_added_tokens(const std::string& place_name, int count) {
+    const Place* place = m_net.find_place(place_name);
+    // invalid place check
+    if (place == nullptr || place->add_token_action.empty()) {
+        return;
+    }
+
+    // executes action for each token
+    for (int token = 0; token < count; ++token) {
+        try {
+            m_evaluator.execute_action(place->add_token_action, *this);
+        }
+        catch (const std::exception& error) {
+            notify_error("Place action of " + place_name + " failed: " + error.what());
+            throw;
         }
     }
 }
@@ -488,7 +739,7 @@ void PetriRuntime::produce_output_tokens(const Transition& transition) {
  * delay. If the transition is bound to an event, the event must match the
  * triggering event inargument. The transition must be enabled and mustn't 
  * have a scheduled timer. The delay expression is evaluated and timer
- * is created and stored.
+ * is created and stored. Then writes timer in log and calls callback if stated
  *
  * @param triggering_event - optional event that triggered the scheduling check
  */
@@ -506,29 +757,47 @@ void PetriRuntime::schedule_delayed_transitions(const std::optional<std::string>
             }
         }
 
-        // not enabled skip
+        // skips not enabled
         if (!transition_enabled(transition, triggering_event)) {
             continue;
         }
 
-        // already scheduled skip
-        if (timer_scheduled(transition.name)) {
+        int delay_ms = m_evaluator.int_evaluation(transition.condition.delay_expression, *this);
+        if (delay_ms < 0) {
+            notify_error("Negative delay for transition " + transition.name);
+            throw std::runtime_error("Negative delay for transition " + transition.name);
+        }
+
+        // creates, fills and ads timer
+        PendingTimer timer;
+        timer.transition_name = transition.name;
+        timer.event_name = transition.condition.event_name;
+        timer.guard_expression = transition.condition.guard_expression;
+        timer.delay_expression = transition.condition.delay_expression;
+        timer.delay_ms = delay_ms;
+        timer.scheduled_at_ms = m_now_ms;
+        timer.due_at_ms = m_now_ms + delay_ms;
+        timer.sequence = ++m_timer_sequence;
+
+        // valid timer check
+        if (timer_scheduled(timer)) {
             continue;
         }
 
-        // evaluates delay and creates timer
-        int delay_ms = m_evaluator.int_evaluation(transition.condition.delay_expression, *this);
-        PendingTimer timer;
-        timer.transition_name = transition.name;
-        timer.scheduled_at_ms = m_now_ms;
-        timer.due_at_ms = m_now_ms + delay_ms;
-        timer.event_name = transition.condition.event_name;
         m_timers.push(timer);
-
-        // updates last change time and writes new schedule in log
         m_transition_enabled_since[transition.name] = m_now_ms;
-        m_logger.log(m_now_ms, LoggerEventType::TimerScheduled, "Timer for transition " + transition.name +
-                     " scheduled at " + std::to_string(timer.due_at_ms) + " ms");
+
+        // writes timer set in log
+        LoggerDetails details;
+        details.transition_name = transition.name;
+        details.old_value = std::to_string(delay_ms);
+        details.new_value = std::to_string(timer.due_at_ms);
+        m_logger.log(m_now_ms, LoggerEventType::TimerScheduled, "Timer for transition " + 
+                transition.name + " scheduled at " + std::to_string(timer.due_at_ms) + " ms", details);
+
+        if (m_on_timer_scheduled) {
+            m_on_timer_scheduled(timer, snapshot());
+        }
     }
 }
 
@@ -539,10 +808,15 @@ void PetriRuntime::schedule_delayed_transitions(const std::optional<std::string>
  * @param transition_name - name of the transition to be checked
  * @return true if a timer for the transition is already scheduled otherwise false
  */
-bool PetriRuntime::timer_scheduled(const std::string& transition_name) const {
+bool PetriRuntime::timer_scheduled(const PendingTimer& timer) const {
     auto copy = m_timers;
     while (!copy.empty()) {
-        if (copy.top().transition_name == transition_name) {
+        const PendingTimer current = copy.top();
+        // finding timer
+        if (    current.transition_name == timer.transition_name && 
+                current.event_name == timer.event_name && 
+                current.guard_expression == timer.guard_expression && 
+                current.delay_expression == timer.delay_expression) {
             return true;
         }
         copy.pop();
@@ -566,12 +840,16 @@ void PetriRuntime::process_due_timers() {
         m_timers.pop();
 
         // timer expiration writen in log
+        LoggerDetails details;
+        details.transition_name = timer.transition_name;
         m_logger.log(m_now_ms, LoggerEventType::TimerExpired, "Timer expired for transition " + 
-                timer.transition_name);
+                timer.transition_name, details);
 
         // transition exists check
         const Transition* transition = find_transition_or_null(timer.transition_name);
         if (transition == nullptr) {
+            m_logger.log(m_now_ms, LoggerEventType::TimerIgnored, 
+                    "Timer ignored because transition no longer exists: " + timer.transition_name, details);
             continue;
         }
 
@@ -583,17 +861,18 @@ void PetriRuntime::process_due_timers() {
                 } 
                 else {
                     m_logger.log(m_now_ms, LoggerEventType::TimerIgnored, "Timer ignored for transition " 
-                        + transition->name + " because guard is false");
+                            + transition->name + " because guard is false", details);
                 }
             } 
-            catch (...) {
+            catch (const std::exception& error) {
+                notify_error("Guard evaluation failed for transition " + transition->name + ": " + error.what());
                 m_logger.log(m_now_ms, LoggerEventType::TimerIgnored, "Timer ignored for transition " + 
-                    transition->name + " because guard evaluation failed");
+                        transition->name + " because guard evaluation failed", details);
             }
         } 
         else {
             m_logger.log(m_now_ms, LoggerEventType::TimerIgnored, "Timer ignored for transition " + 
-                transition->name + " because there are not enough tokens");
+                transition->name + " because there are not enough tokens", details);
         }
     }
 }
@@ -604,7 +883,78 @@ void PetriRuntime::process_due_timers() {
  * @param name - name of the transition to be found
  * @return pointer to the found transition, or nullptr if it was not found
  */
-
 const Transition* PetriRuntime::find_transition_or_null(const std::string& name) const {
     return m_net.find_transition(name);
+}
+
+/**
+ * Method creates initial value for a given variable. Converts initialiyer
+ * according to type.
+ *
+ * note: if the variable type is not specified, integer type is used.
+ * note1: if the initializer is not specified, zero is used as default value.
+ *
+ * @param variable - variable whose initial value should be created
+ * @return initial value of the variable
+ */
+EvalValue PetriRuntime::initial_value_for_variable(const Variable& variable) const {
+    // if stated sets default type initializer or type
+    std::string type;
+    if (variable.type.empty()) {
+        type = "int";
+    }
+    else {
+        type = variable.type;
+    }
+    std::string initializer;
+    if (variable.initializer.empty()) {
+        initializer = "0";
+    }
+    else {
+        initializer = variable.initializer;
+    }
+
+    // conversion to lowercase cause of easier comparison
+    std::string lowered = type;
+    std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+
+    // creates string value
+    if (lowered == "string" || lowered == "std::string") {
+        if (initializer.size() >= 2 && initializer.front() == '"' && initializer.back() == '"') {
+            return EvalValue::string(initializer.substr(1, initializer.size() - 2));
+        }
+        return EvalValue::string(initializer);
+    }
+
+    // creates bool value
+    if (lowered == "bool") {
+        return EvalValue::boolean(initializer == "true" || initializer == "1");
+    }
+
+    // creates  int value
+    return EvalValue::integer(std::atoll(initializer.c_str()));
+}
+
+/**
+ * Method notifies that runtime state has changed
+ */
+void PetriRuntime::notify_state_changed() const {
+    if (m_on_state_changed) {
+        m_on_state_changed(snapshot());
+    }
+}
+
+/**
+ * Method logs runtime error and notifies about it. If error callback 
+ * is not set, writes only to log
+ *
+ * @param message - error message to be logged and passed to callback
+ */
+void PetriRuntime::notify_error(const std::string& message) {
+    m_logger.log(m_now_ms, LoggerEventType::Error, message);
+    if (m_on_error) {
+        m_on_error(message, snapshot());
+    }
 }

@@ -14,7 +14,7 @@ all: $(TARGET)
 
 $(TARGET): $(OBJS)
 	$(CXX) $(CXXFLAGS) $(OBJS) -o $@ $(LDFLAGS)
-	@echo "Vytvorený konzolový program: $@"
+	@echo "Program created: $@"
 
 $(BUILD_DIR)/%.o: %.cpp
 	@mkdir -p $(BUILD_DIR)
@@ -25,4 +25,4 @@ run: $(TARGET)
 
 clean:
 	@rm -rf $(BUILD_DIR) $(TARGET)
-	@echo "Vyčistené."
+	@echo "Cleaned"

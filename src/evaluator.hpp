@@ -66,7 +66,7 @@ public:
 private:
     void execute_block(const std::string& code, EvaluationInterface& interface) const;
     void execute_statement(const std::string& statement, EvaluationInterface& interface) const;
-    static std::string trim(const std:: string& string);
+    static std::string trim(const std::string& string);
     static std::vector<std::string> split_statements(const std::string& code);
 };
 
