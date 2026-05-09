@@ -1,0 +1,77 @@
+Jméno sítě:
+    TOF_PN
+Komentář:
+    Timer to off, umí nastavit timeout a na požádání sdělit zbývající čas timeru.
+Vstupy:
+    in
+    set_to
+    req_rt
+Výstupy:
+    out
+    rt
+Proměnné:
+    int timeout = 5000
+Místa (počáteční tokeny, volitelně akce):
+    IDLE   (1) : { output("out", 0); output("rt", 0); }
+    ACTIVE (0) : { output("out", 1); output("rt", timeout); }
+    TIMING (0) : { output("rt", timeout - elapsed("TIMING")); }
+Přechody a jejich podmínky:
+
+T_on :
+    in:  IDLE*1
+    out: ACTIVE*1 
+    when: in [ atoi(valueof("in")) == 1 ]
+    do: { if (defined("set_to")) { timeout = atoi(valueof("set_to")); } }
+T_off_start :
+    in:  ACTIVE*1
+    out: TIMING*1
+    when: in [ atoi(valueof("in")) == 0 ]
+    do: { if (defined("set_to")) { timeout = atoi(valueof("set_to")); } }
+
+T_cancel_off :
+    in:  TIMING*1
+    out: ACTIVE*1
+    when: in [ atoi(valueof("in")) == 1 ]
+    do: { if (defined("set_to")) { timeout = atoi(valueof("set_to")); } }
+
+T_timeout_off :
+    in:  TIMING*1
+    out: IDLE*1
+    when: @ timeout
+    do: { if (defined("set_to")) { timeout = atoi(valueof("set_to")); } }
+
+T_set_idle :
+    in:  IDLE*1
+    out: IDLE*1
+    when: set_to
+    do: { timeout = atoi(valueof("set_to")); output("rt", 0); }
+
+T_set_active :
+    in:  ACTIVE*1
+    out: ACTIVE*1
+    when: set_to
+    do: { timeout = atoi(valueof("set_to")); output("rt", timeout); }
+
+T_set_timing :
+    in:  TIMING*1
+    out: TIMING*1
+    when: set_to
+    do: { timeout = atoi(valueof("set_to")); output("rt", timeout - elapsed("TIMING")); }
+
+T_req_idle :
+    in:  IDLE*1
+    out: IDLE*1
+    when: req_rt
+    do: { output("rt", 0); }
+
+T_req_active :
+    in:  ACTIVE*1
+    out: ACTIVE*1
+    when: req_rt
+    do: { output("rt", timeout); }
+
+T_req_timing :
+    in:  TIMING*1
+    out: TIMING*1
+    when: req_rt
+    do: { output("rt", timeout - elapsed("TIMING")); }

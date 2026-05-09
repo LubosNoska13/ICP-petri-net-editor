@@ -1,0 +1,37 @@
+Jméno sítě:
+    TOF_PN_5s
+Komentář:
+    Timer to off, jednoduchá verze.
+Vstupy:
+    in
+Výstupy:
+    out
+Proměnné:
+    int timeout = 5000
+Místa (počáteční tokeny, volitelně akce):
+    IDLE   (1) : { output("out", 0); }
+    ACTIVE (0) : { output("out", 1); }
+    TIMING (0) : { }
+Přechody a jejich podmínky:
+T_on :
+    in:  IDLE*1
+    out: ACTIVE*1
+    when: in [ atoi(valueof("in")) == 1 ]
+    do: { }
+T_off_start :
+    in:  ACTIVE*1
+    out: TIMING*1
+    when: in [ atoi(valueof("in")) == 0 ]
+    do: { }
+
+T_cancel_off :
+    in:  TIMING*1
+    out: ACTIVE*1
+    when: in [ atoi(valueof("in")) == 1 ]
+    do: { }
+
+T_timeout_off :
+    in:  TIMING*1
+    out: IDLE*1
+    when: @ timeout
+    do: { }
