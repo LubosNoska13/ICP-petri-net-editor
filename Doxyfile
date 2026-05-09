@@ -1,0 +1,14 @@
+# Authors: Lubos and project team
+# Description: Doxygen configuration for the Petri net editor.
+# Manual/generated: written manually.
+# Borrowed code: none.
+
+PROJECT_NAME           = "Petri Net Editor"
+OUTPUT_DIRECTORY       = doc
+INPUT                  = src README.txt
+RECURSIVE              = YES
+SOURCE_BROWSER         = YES
+EXTRACT_ALL            = YES
+GENERATE_HTML          = YES
+GENERATE_LATEX         = NO
+QUIET                  = YES

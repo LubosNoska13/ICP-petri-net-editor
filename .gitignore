@@ -1,0 +1,61 @@
+# Build directories and generated binaries
+build/
+release/
+debug/
+bin/
+obj/
+*.o
+*.obj
+*.a
+*.so
+*.dll
+*.dylib
+*.exe
+*.out
+petri-net-editor
+
+# Qt/qmake generated files
+.qmake.stash
+Makefile.Debug
+Makefile.Release
+moc_*.cpp
+moc_*.o
+moc_*.h
+qrc_*.cpp
+ui_*.h
+*.pro.user
+*.pro.user.*
+
+# Doxygen generated documentation
+doc/html/
+doc/latex/
+doc/xml/
+doc/man/
+doc/rtf/
+doc/tag/
+doc/*.tag
+
+# Pack/export artifacts
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+
+# Temporary and backup files
+*~
+*.bak
+*.tmp
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# IDE/editor local settings
+.vscode/
+.idea/
+*.creator
+*.creator.user
+*.files
+*.includes

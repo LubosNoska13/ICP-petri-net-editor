@@ -1,0 +1,22 @@
+[net]
+name=TOF_PN_5s
+comment=Example placeholder for GUI testing.
+
+[inputs]
+IN;
+
+[outputs]
+OUT;
+
+[variables]
+
+[places]
+p1;Start;1;120;120;
+p2;Wait;0;360;120;
+
+[transitions]
+t1;OnInput;240;120;IN;;5000;output("OUT","1");0
+
+[arcs]
+a1;p1;t1;1
+a2;t1;p2;1
