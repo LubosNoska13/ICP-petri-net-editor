@@ -1,0 +1,8 @@
+[layout]
+place;IDLE;47.5992;116.941
+place;ACTIVE;376.677;-214.471
+place;TIMING;542.598;427.958
+transition;T_on;205;120
+transition;T_off_start;375;120
+transition;T_cancel_off;545;120
+transition;T_timeout_off;715;120

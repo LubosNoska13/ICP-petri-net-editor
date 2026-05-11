@@ -39,7 +39,15 @@ Popis rozdelenia práce:
 #################################
 
 Známe obmedzenia:
+    - GUI ukladá pozície prvkov diagramu do pomocného súboru s príponou .layout.
+      Hlavný .pn súbor zostáva v textovom formáte core časti.
+    - Ak .layout súbor chýba, GUI rozmiestni miesta a prechody automaticky.
+    - Testovací adresár je pripravený, ale aktuálny tests/Makefile zatiaľ neobsahuje spustiteľný cieľ.
 Vývojové rozhodnutia:
+    - GUI používa vlastný Qt dokument PetriNetDocument iba ako editorový model.
+      Pred uložením, validáciou a spustením sa dokument konvertuje na core PetriNet.
+    - Runtime monitor je pripojený cez CoreRuntimeAdapter na PetriRuntime.
+      GUI nemení sémantiku enabled prechodov, konfliktov ani firing-u.
 Štruktúra:
     .
     ├── Doxyfile
@@ -54,6 +62,15 @@ Vývojové rozhodnutia:
     │   └── tof_pn_5s.pn
     ├── src
     │   ├── Makefile
+    │   ├── core_api
+    │   │   ├── CoreMapper.cpp/h
+    │   │   ├── CoreRuntimeAdapter.cpp/h
+    │   │   ├── DocumentSerializer.cpp/h
+    │   │   └── PetriNetDocument.cpp/h
+    │   ├── gui
+    │   │   ├── MainWindow.cpp/h
+    │   │   ├── DiagramScene.cpp/h
+    │   │   └── panely a grafické prvky editora
     │   ├── evaluator.cpp
     │   ├── evaluator.hpp
     │   ├── logger.cpp
@@ -86,6 +103,9 @@ Popis implementačných súborov:
     6, logger - ukladanie a vypisovanie logov (ukladá čas, typ a textový popis)
     7, main - konzolový vstupný bod aplikácie (načítanie .pn, spustenie validácie, inicializácia 
         runtime a i.)
+    8, core_api/CoreMapper - prevod medzi Qt editorovým dokumentom a core modelom PetriNet
+    9, core_api/CoreRuntimeAdapter - napojenie GUI monitora na PetriRuntime
+    10, core_api/DocumentSerializer - uloženie a načítanie cez core Parser/Writer a .layout súbor
 
 
 -----------------------------------------------------------------
@@ -94,7 +114,13 @@ Popis implementačných súborov:
 #################################
 
 Testované na:
+    - Linux, Qt 5, g++ s podporou C++17
 Príklady manuálneho testovania:
+    - make clean && make
+    - make doxygen
+    - make pack
+    - otvorenie examples/tof_pn_5s.pn v GUI, spustenie runtime a injektovanie vstupov in=1, in=0
+    - overenie, že uloženie vytvorí čistý .pn súbor a pomocný .pn.layout súbor s pozíciami
 
 #################################
 ############ ZDROJE #############
