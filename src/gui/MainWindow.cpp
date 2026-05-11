@@ -7,20 +7,96 @@
 
 #include "gui/MainWindow.h"
 
+#include "core_api/CoreMapper.h"
+#include "validate.hpp"
+
 #include <QActionGroup>
 #include <QCloseEvent>
+#include <QDateTime>
 #include <QDockWidget>
 #include <QFileDialog>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QScrollArea>
 #include <QStatusBar>
 #include <QToolBar>
+
+namespace {
+
+QString validationSeverityName(ValidationSeverity severity)
+{
+    return severity == ValidationSeverity::Error ? "error" : "warning";
+}
+
+QString validationLine(const ValidationMessage &message)
+{
+    return validationSeverityName(message.severity) + ": "
+        + QString::fromStdString(message.message);
+}
+
+QStringList validationTextLines(const QStringList &conversionErrors,
+                                const ValidationResult &validation)
+{
+    QStringList lines;
+    for (int i = 0; i < conversionErrors.size(); ++i) {
+        lines << "error: " + conversionErrors.at(i);
+    }
+    for (std::size_t i = 0; i < validation.messages.size(); ++i) {
+        lines << validationLine(validation.messages.at(i));
+    }
+    return lines;
+}
+
+QList<LogEntry> validationLogEntries(const QStringList &conversionErrors,
+                                     const ValidationResult &validation)
+{
+    QList<LogEntry> entries;
+    QDateTime now = QDateTime::currentDateTime();
+
+    for (int i = 0; i < conversionErrors.size(); ++i) {
+        LogEntry entry;
+        entry.time = now;
+        entry.text = "validation-error: " + conversionErrors.at(i);
+        entries.append(entry);
+    }
+
+    for (std::size_t i = 0; i < validation.messages.size(); ++i) {
+        const ValidationMessage &message = validation.messages.at(i);
+        LogEntry entry;
+        entry.time = now;
+        entry.text = "validation-" + validationSeverityName(message.severity)
+            + ": " + QString::fromStdString(message.message);
+        entries.append(entry);
+    }
+
+    if (entries.isEmpty()) {
+        LogEntry entry;
+        entry.time = now;
+        entry.text = "validation-ok: No validation errors or warnings.";
+        entries.append(entry);
+    }
+
+    return entries;
+}
+
+int validationWarningCount(const ValidationResult &validation)
+{
+    int count = 0;
+    for (std::size_t i = 0; i < validation.messages.size(); ++i) {
+        if (validation.messages.at(i).severity == ValidationSeverity::Warning) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+} // namespace
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent), m_modified(false)
 {
     setWindowTitle("Petri Net Editor");
-    resize(1200, 800);
+    resize(1100, 680);
 
     m_scene = new DiagramScene(this);
     m_scene->setDocument(&m_document);
@@ -127,13 +203,31 @@ void MainWindow::deleteSelected()
 
 void MainWindow::validateDocument()
 {
-    QStringList errors = m_document.validateBasic();
-    if (errors.isEmpty()) {
-        QMessageBox::information(this, "Validation", "No basic validation errors found.");
+    QStringList conversionErrors;
+    PetriNet net = CoreMapper::toCoreNet(m_document, &conversionErrors);
+    Validator validator;
+    ValidationResult validation = validator.validate(net);
+
+    QStringList lines = validationTextLines(conversionErrors, validation);
+    m_logPanel->setEntries(validationLogEntries(conversionErrors, validation));
+
+    if (lines.isEmpty()) {
+        QMessageBox::information(this, "Validation",
+                                 "No validation errors or warnings found.");
         statusBar()->showMessage("Validation passed.");
+    } else if (!conversionErrors.isEmpty() || validation.has_errors()) {
+        QMessageBox::warning(this, "Validation", lines.join("\n"));
+        int errorCount = conversionErrors.size();
+        for (std::size_t i = 0; i < validation.messages.size(); ++i) {
+            if (validation.messages.at(i).severity == ValidationSeverity::Error) {
+                ++errorCount;
+            }
+        }
+        statusBar()->showMessage(QString::number(errorCount) + " validation errors.");
     } else {
-        QMessageBox::warning(this, "Validation", errors.join("\n"));
-        statusBar()->showMessage(QString::number(errors.size()) + " validation errors.");
+        QMessageBox::information(this, "Validation", lines.join("\n"));
+        statusBar()->showMessage(QString::number(validationWarningCount(validation))
+                                 + " validation warnings.");
     }
 }
 
@@ -163,7 +257,10 @@ void MainWindow::startRuntime()
     if (m_runtime.start(&m_document)) {
         m_runtimeTimer->start();
         refreshRuntime();
-        statusBar()->showMessage("Dummy runtime started.");
+        statusBar()->showMessage("Runtime started.");
+    } else {
+        refreshRuntime();
+        statusBar()->showMessage("Runtime start failed.");
     }
 }
 
@@ -177,9 +274,13 @@ void MainWindow::stopRuntime()
 
 void MainWindow::refreshRuntime()
 {
+    if (m_runtime.isRunning()) {
+        m_runtime.advanceTime(m_runtimeTimer->interval());
+    }
     RuntimeSnapshot snapshot = m_runtime.snapshot();
     m_monitorPanel->setRunning(m_runtime.isRunning());
     m_monitorPanel->setSnapshot(snapshot);
+    m_scene->updateRuntimeMarking(snapshot);
     m_logPanel->setEntries(snapshot.logEntries);
 }
 
@@ -274,11 +375,17 @@ void MainWindow::createToolbar()
 void MainWindow::createDockWidgets()
 {
     QDockWidget *propertiesDock = new QDockWidget("Properties", this);
-    propertiesDock->setWidget(m_propertyPanel);
+    QScrollArea *propertiesScroll = new QScrollArea;
+    propertiesScroll->setWidgetResizable(true);
+    propertiesScroll->setWidget(m_propertyPanel);
+    propertiesDock->setWidget(propertiesScroll);
     addDockWidget(Qt::RightDockWidgetArea, propertiesDock);
 
     QDockWidget *monitorDock = new QDockWidget("Runtime monitor", this);
-    monitorDock->setWidget(m_monitorPanel);
+    QScrollArea *monitorScroll = new QScrollArea;
+    monitorScroll->setWidgetResizable(true);
+    monitorScroll->setWidget(m_monitorPanel);
+    monitorDock->setWidget(monitorScroll);
     addDockWidget(Qt::RightDockWidgetArea, monitorDock);
 
     QDockWidget *logDock = new QDockWidget("Runtime log", this);
@@ -298,6 +405,30 @@ void MainWindow::setMode(DiagramMode mode)
 
 bool MainWindow::saveToFile(const QString &fileName)
 {
+    QStringList conversionErrors;
+    PetriNet net = CoreMapper::toCoreNet(m_document, &conversionErrors);
+    if (!conversionErrors.isEmpty()) {
+        QMessageBox::warning(this, "Save failed",
+                             "The document could not be converted to the core model:\n\n"
+                             + conversionErrors.join("\n"));
+        return false;
+    }
+
+    Validator validator;
+    ValidationResult validation = validator.validate(net);
+    if (!validation.messages.empty()) {
+        QStringList lines = validationTextLines(QStringList(), validation);
+        QString question = "The network has validation messages.\n"
+                           "Do you want to save it anyway?\n\n" + lines.join("\n");
+        QMessageBox::StandardButton button = QMessageBox::question(
+            this, "Save validation warning", question,
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (button != QMessageBox::Yes) {
+            statusBar()->showMessage("Save cancelled after validation.");
+            return false;
+        }
+    }
+
     QString error;
     if (!DocumentSerializer::save(m_document, fileName, &error)) {
         QMessageBox::warning(this, "Save failed", error);

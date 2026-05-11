@@ -12,6 +12,7 @@
 #include "core_api/RuntimeSnapshot.h"
 
 #include <QComboBox>
+#include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QTableWidget>
@@ -42,6 +43,7 @@ private:
     void fillIoTable(QTableWidget *table, const QList<IoData> &items);
 
     PetriNetDocument *m_document;
+    QLabel *m_stateLabel;
     QPushButton *m_startButton;
     QPushButton *m_stopButton;
     QPushButton *m_refreshButton;

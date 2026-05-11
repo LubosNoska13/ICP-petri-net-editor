@@ -66,7 +66,7 @@ private:
     QLineEdit *m_transitionName;
     QLineEdit *m_transitionEvent;
     QLineEdit *m_transitionGuard;
-    QSpinBox *m_transitionDelay;
+    QLineEdit *m_transitionDelay;
     QSpinBox *m_transitionPriority;
     QPlainTextEdit *m_transitionAction;
 

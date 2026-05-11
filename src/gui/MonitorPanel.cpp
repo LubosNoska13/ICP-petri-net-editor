@@ -23,6 +23,8 @@ static QTableWidget *makeTable(const QStringList &headers)
     table->verticalHeader()->setVisible(false);
     table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    table->setMinimumHeight(64);
+    table->setMaximumHeight(96);
     return table;
 }
 
@@ -30,6 +32,11 @@ MonitorPanel::MonitorPanel(QWidget *parent)
     : QWidget(parent), m_document(0)
 {
     QVBoxLayout *root = new QVBoxLayout(this);
+
+    m_stateLabel = new QLabel("Runtime: STOPPED");
+    m_stateLabel->setAlignment(Qt::AlignCenter);
+    m_stateLabel->setMinimumHeight(32);
+    root->addWidget(m_stateLabel);
 
     m_startButton = new QPushButton("Start");
     m_stopButton = new QPushButton("Stop");
@@ -75,6 +82,7 @@ MonitorPanel::MonitorPanel(QWidget *parent)
     root->addWidget(injectBox);
 
     connect(m_injectButton, SIGNAL(clicked()), this, SLOT(onInjectClicked()));
+    setRunning(false);
 }
 
 void MonitorPanel::setDocument(PetriNetDocument *document)
@@ -123,6 +131,17 @@ void MonitorPanel::setRunning(bool running)
 {
     m_startButton->setEnabled(!running);
     m_stopButton->setEnabled(running);
+    m_startButton->setText(running ? "Running" : "Start");
+
+    if (running) {
+        m_stateLabel->setText("Runtime: RUNNING");
+        m_stateLabel->setStyleSheet("QLabel { background: #1f8f3a; color: white; "
+                                    "font-weight: bold; border-radius: 4px; padding: 6px; }");
+    } else {
+        m_stateLabel->setText("Runtime: STOPPED");
+        m_stateLabel->setStyleSheet("QLabel { background: #e7e7e7; color: #333333; "
+                                    "font-weight: bold; border-radius: 4px; padding: 6px; }");
+    }
 }
 
 void MonitorPanel::onInjectClicked()

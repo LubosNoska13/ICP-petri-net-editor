@@ -39,6 +39,7 @@ struct TransitionData {
     QString event;
     QString guard;
     int delayMs;
+    QString delayExpression;
     QString action;
     int priority;
 
@@ -57,8 +58,11 @@ struct ArcData {
 
 /** Internal variable description. */
 struct VariableData {
+    QString type;
     QString name;
     QString initialValue;
+
+    VariableData() : type("int") {}
 };
 
 /** Input or output description. */

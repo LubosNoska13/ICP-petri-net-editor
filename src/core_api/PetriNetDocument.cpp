@@ -39,7 +39,7 @@ PlaceData PetriNetDocument::addPlace(double x, double y)
 {
     PlaceData place;
     place.id = makeId("p");
-    place.name = "Place " + QString::number(m_nextPlace - 1);
+    place.name = "P" + QString::number(m_nextPlace - 1);
     place.tokens = 0;
     place.x = x;
     place.y = y;
@@ -51,7 +51,7 @@ TransitionData PetriNetDocument::addTransition(double x, double y)
 {
     TransitionData transition;
     transition.id = makeId("t");
-    transition.name = "Transition " + QString::number(m_nextTransition - 1);
+    transition.name = "T" + QString::number(m_nextTransition - 1);
     transition.x = x;
     transition.y = y;
     m_transitions.append(transition);

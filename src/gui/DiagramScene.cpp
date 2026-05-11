@@ -8,6 +8,7 @@
 #include "gui/DiagramScene.h"
 
 #include <QGraphicsSceneMouseEvent>
+#include <QSet>
 
 DiagramScene::DiagramScene(QObject *parent)
     : QGraphicsScene(parent), m_document(0), m_mode(SelectMode)
@@ -88,8 +89,41 @@ void DiagramScene::reloadFromDocument()
 
 void DiagramScene::updateRuntimeMarking(const RuntimeSnapshot &snapshot)
 {
-    Q_UNUSED(snapshot);
-    reloadFromDocument();
+    if (!m_document) {
+        return;
+    }
+
+    for (int i = 0; i < snapshot.marking.size(); ++i) {
+        MarkingEntry entry = snapshot.marking.at(i);
+        if (entry.placeId.isEmpty() || !m_elementItems.contains(entry.placeId)) {
+            continue;
+        }
+        PlaceData place;
+        if (m_document->placeById(entry.placeId, &place)) {
+            place.tokens = entry.tokens;
+            PlaceItem *placeItem = dynamic_cast<PlaceItem *>(m_elementItems.value(entry.placeId));
+            if (placeItem) {
+                placeItem->setPlaceData(place);
+            }
+        }
+    }
+
+    QSet<QString> enabledNames;
+    for (int i = 0; i < snapshot.enabledTransitions.size(); ++i) {
+        enabledNames.insert(snapshot.enabledTransitions.at(i));
+    }
+
+    QList<TransitionData> transitions = m_document->transitions();
+    for (int i = 0; i < transitions.size(); ++i) {
+        const TransitionData &transition = transitions.at(i);
+        if (!m_elementItems.contains(transition.id)) {
+            continue;
+        }
+        TransitionItem *transitionItem = dynamic_cast<TransitionItem *>(m_elementItems.value(transition.id));
+        if (transitionItem) {
+            transitionItem->setEnabledHighlight(enabledNames.contains(transition.name));
+        }
+    }
 }
 
 void DiagramScene::mousePressEvent(QGraphicsSceneMouseEvent *event)

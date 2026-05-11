@@ -68,11 +68,15 @@ void TransitionItem::refreshText()
     if (!m_transition.event.isEmpty()) {
         condition += m_transition.event;
     }
-    if (m_transition.delayMs > 0) {
+    QString delayText = m_transition.delayExpression;
+    if (delayText.isEmpty() && m_transition.delayMs > 0) {
+        delayText = QString::number(m_transition.delayMs);
+    }
+    if (!delayText.isEmpty() && delayText != "0") {
         if (!condition.isEmpty()) {
             condition += " ";
         }
-        condition += "@" + QString::number(m_transition.delayMs);
+        condition += "@" + delayText;
     }
     m_conditionText->setPlainText(condition);
     m_conditionText->setDefaultTextColor(QColor(70, 70, 70));

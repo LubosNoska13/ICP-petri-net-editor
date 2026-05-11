@@ -10,6 +10,7 @@
 #include <QFormLayout>
 #include <QLabel>
 #include <QPushButton>
+#include <QRegExp>
 #include <QVBoxLayout>
 
 PropertyPanel::PropertyPanel(QWidget *parent)
@@ -53,8 +54,7 @@ PropertyPanel::PropertyPanel(QWidget *parent)
     m_transitionName = new QLineEdit;
     m_transitionEvent = new QLineEdit;
     m_transitionGuard = new QLineEdit;
-    m_transitionDelay = new QSpinBox;
-    m_transitionDelay->setRange(0, 100000000);
+    m_transitionDelay = new QLineEdit;
     m_transitionPriority = new QSpinBox;
     m_transitionPriority->setRange(-1000000, 1000000);
     m_transitionAction = new QPlainTextEdit;
@@ -62,7 +62,7 @@ PropertyPanel::PropertyPanel(QWidget *parent)
     transitionLayout->addRow("Name", m_transitionName);
     transitionLayout->addRow("Event", m_transitionEvent);
     transitionLayout->addRow("Guard", m_transitionGuard);
-    transitionLayout->addRow("Delay ms", m_transitionDelay);
+    transitionLayout->addRow("Delay", m_transitionDelay);
     transitionLayout->addRow("Priority", m_transitionPriority);
     transitionLayout->addRow("Action", m_transitionAction);
     transitionLayout->addRow(applyTransitionButton);
@@ -117,7 +117,9 @@ void PropertyPanel::reload()
             m_transitionName->setText(transition.name);
             m_transitionEvent->setText(transition.event);
             m_transitionGuard->setText(transition.guard);
-            m_transitionDelay->setValue(transition.delayMs);
+            m_transitionDelay->setText(transition.delayExpression.isEmpty()
+                                       ? QString::number(transition.delayMs)
+                                       : transition.delayExpression);
             m_transitionPriority->setValue(transition.priority);
             m_transitionAction->setPlainText(transition.action);
             m_stack->setCurrentWidget(m_transitionPage);
@@ -175,7 +177,8 @@ void PropertyPanel::applyTransition()
     transition.name = m_transitionName->text();
     transition.event = m_transitionEvent->text();
     transition.guard = m_transitionGuard->text();
-    transition.delayMs = m_transitionDelay->value();
+    transition.delayExpression = m_transitionDelay->text().trimmed();
+    transition.delayMs = transition.delayExpression.toInt();
     transition.priority = m_transitionPriority->value();
     transition.action = m_transitionAction->toPlainText();
     m_document->updateTransition(transition);
@@ -221,9 +224,18 @@ QList<VariableData> PropertyPanel::parseVariableLines(const QString &text) const
             continue;
         }
         QStringList parts = line.split('=');
+        QString left = parts.at(0).trimmed();
         VariableData item;
-        item.name = parts.at(0).trimmed();
-        item.initialValue = parts.size() > 1 ? parts.mid(1).join("=").trimmed() : QString();
+        item.initialValue = parts.size() > 1 ? parts.mid(1).join("=").trimmed() : QString("0");
+
+        QStringList words = left.split(QRegExp("\\s+"), QString::SkipEmptyParts);
+        if (words.size() >= 2) {
+            item.type = words.at(0).trimmed();
+            item.name = words.mid(1).join(" ").trimmed();
+        } else {
+            item.type = "int";
+            item.name = left;
+        }
         result.append(item);
     }
     return result;
@@ -242,7 +254,8 @@ QString PropertyPanel::variableLines(const QList<VariableData> &items) const
 {
     QStringList lines;
     for (int i = 0; i < items.size(); ++i) {
-        lines << (items.at(i).name + "=" + items.at(i).initialValue);
+        QString type = items.at(i).type.trimmed().isEmpty() ? "int" : items.at(i).type.trimmed();
+        lines << (type + " " + items.at(i).name + " = " + items.at(i).initialValue);
     }
     return lines.join("\n");
 }

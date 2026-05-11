@@ -8,8 +8,8 @@
 #ifndef MAINWINDOW_H
 #define MAINWINDOW_H
 
+#include "core_api/CoreRuntimeAdapter.h"
 #include "core_api/DocumentSerializer.h"
-#include "core_api/DummyRuntimeAdapter.h"
 #include "gui/DiagramScene.h"
 #include "gui/DiagramView.h"
 #include "gui/LogPanel.h"
@@ -59,7 +59,7 @@ private:
     QString modeName(DiagramMode mode) const;
 
     PetriNetDocument m_document;
-    DummyRuntimeAdapter m_runtime;
+    CoreRuntimeAdapter m_runtime;
     QString m_currentFile;
     bool m_modified;
 
